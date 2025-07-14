@@ -9,6 +9,11 @@ from albumentations.pytorch import ToTensorV2
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
+from ultralytics import YOLO
+from ultralytics.data.dataset import ClassificationDataset
+from ultralytics.models.yolo.classify import ClassificationTrainer, ClassificationValidator
+
+
 class AlbumentationsTransform:
     def __init__(self, aug):
         self.aug = aug
@@ -71,32 +76,42 @@ def split_dataset(
 split_dataset("images_datasets", "split_images")
 
 
-def get_loaders(train_dir, valid_dir, test_dir, transform=None, batch_size=32, num_workers=2):
-    train_transforms = A.Compose([
-        A.Resize(64, 64),
-        A.RandomResizedCrop((56, 56), scale=(0.8, 1.0)),
-        A.HorizontalFlip(p=0.5),
-        A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.8),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        A.ToTensorV2(),
-    ])
-    train_transforms = AlbumentationsTransform(train_transforms)
+class CustomizedDataset(ClassificationDataset):
+    def __init__(self, root: str, args, augment: bool = False, prefix: str = ""):
+        """Initialize a customized classification dataset with enhanced data augmentation transforms."""
+        super().__init__(root, args, augment, prefix)
 
-    val_transforms = A.Compose([
-        A.Resize(64, 64),
-        A.CenterCrop(56, 56),
-        A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
-        A.ToTensorV2(),
-    ])
+        train_transforms = A.Compose([
+            A.Resize(64, 64),
+            # A.RandomResizedCrop((56, 56), scale=(0.8, 1.0)),
+            A.HorizontalFlip(p=0.5),
+            A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.8),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.ToTensorV2(),
+        ])
+        train_transforms = AlbumentationsTransform(train_transforms)
 
-    val_transforms = AlbumentationsTransform(val_transforms)
+        val_transforms = A.Compose([
+            A.Resize(64, 64),
+            # A.CenterCrop(56, 56),
+            A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+            A.ToTensorV2(),
+        ])
+        val_transforms = AlbumentationsTransform(val_transforms)
+        self.torch_transforms = train_transforms if augment else val_transforms
 
-    train = datasets.ImageFolder(train_dir, transform=train_transforms)
-    val = datasets.ImageFolder(valid_dir, transform=val_transforms)
-    test = datasets.ImageFolder(test_dir, transform=val_transforms)
 
-    train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=num_workers)
-    val_loader = DataLoader(val, batch_size=batch_size, shuffle=False, num_workers=num_workers)
-    test_loader = DataLoader(test, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+class CustomizedTrainer(ClassificationTrainer):
+    """A customized trainer class for YOLO classification models with enhanced dataset handling."""
 
-    return train_loader, val_loader, test_loader
+    def build_dataset(self, img_path: str, mode: str = "train", batch=None):
+        """Build a customized dataset for classification training and the validation during training."""
+        return CustomizedDataset(root=img_path, args=self.args, augment=mode == "train", prefix=mode)
+
+
+class CustomizedValidator(ClassificationValidator):
+    """A customized validator class for YOLO classification models with enhanced dataset handling."""
+
+    def build_dataset(self, img_path: str, mode: str = "val"):
+        """Build a customized dataset for classification standalone validation."""
+        return CustomizedDataset(root=img_path, args=self.args, augment=mode == "train", prefix=self.args.split)
